@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <style>
+        :root { --aether-teal: #00d1b2; --bg: #0f0f0f; --panel: #1a1a1a; --text: #ffffff; --input-bg: #222; --tab-inactive: #111; }
+        .light-theme { --bg: #ffffff; --panel: #f6f8fa; --text: #24292f; --input-bg: #ffffff; --tab-inactive: #ebf0f4; --aether-teal: #0969da; }
+        body, html { margin: 0; padding: 0; height: 100vh; font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); overflow: hidden; transition: 0.3s; }
+        .master-container { display: flex; width: 100vw; height: 100vh; }
+
+        .dashboard { width: 380px; background: var(--panel); border-right: 2px solid var(--aether-teal); display: flex; flex-direction: column; padding: 25px; box-sizing: border-box; }
+        h1 { color: var(--aether-teal); margin: 0; font-size: 1.6rem; }
+        .theme-btn { background: var(--input-bg); color: var(--text); border: 1px solid #444; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.7rem; margin-top: 10px; }
+        input { width: 100%; background: var(--input-bg); border: 1px solid #444; color: var(--text); padding: 12px; border-radius: 5px; margin-bottom: 10px; box-sizing: border-box; outline: none; }
+        .deploy-btn { width: 100%; background: var(--aether-teal); color: white; border: none; padding: 15px; border-radius: 5px; font-weight: bold; cursor: pointer; }
+
+        .browser { flex-grow: 1; display: flex; flex-direction: column; background: #000; }
+        .tab-bar { display: flex; background: var(--tab-inactive); padding: 5px 5px 0 5px; gap: 2px; align-items: flex-end; }
+        .tab { background: var(--panel); color: var(--text); padding: 8px 15px; border-radius: 8px 8px 0 0; font-size: 0.75rem; cursor: pointer; min-width: 120px; border: 1px solid transparent; display: flex; justify-content: space-between; }
+        .tab.active { background: var(--bg); border: 1px solid #444; border-bottom: none; font-weight: bold; }
+        .nav-bar { background: var(--bg); padding: 10px; display: flex; gap: 10px; align-items: center; border-bottom: 1px solid #444; }
+        #url-bar { flex-grow: 1; border-radius: 20px; background: var(--panel); border: 1px solid #444; padding: 8px 18px; color: var(--text); }
+        .view-container { flex-grow: 1; position: relative; background: white; }
+        webview { position: absolute; top: 0; left: 0; width: 100%; height: 100%; visibility: hidden; }
+        webview.active { visibility: visible; }
+    </style>
+</head>
+<body>
+<div class="master-container">
+    <div class="dashboard">
+        <h1>AetherNet</h1>
+        <button class="theme-btn" onclick="toggleTheme()">🌓 Switch Theme</button>
+        <div id="drop-zone" style="border: 2px dashed #444; padding: 20px; text-align: center; margin: 15px 0; font-size: 0.8rem;">Drop index.html</div>
+        <input type="text" id="path-input" placeholder="Paste path here...">
+        <input type="text" id="dom-input" placeholder="Desired .com name">
+        <button class="deploy-btn" onclick="register()">🚀 Deploy Project</button>
+        <div id="registry-list" style="margin-top:20px; overflow-y:auto; flex-grow:1;"></div>
+    </div>
+    <div class="browser">
+        <div class="tab-bar"><div id="tabs-container" style="display:flex; gap:2px;"></div><button onclick="createTab('https://www.google.com')" style="background:none; border:none; color:var(--text); cursor:pointer; padding:0 10px;">+</button></div>
+        <div class="nav-bar">
+            <button onclick="getCurrentWebview().goBack()" style="background:none; border:none; color:var(--text); cursor:pointer;">◀</button>
+            <input type="text" id="url-bar" placeholder="Enter URL...">
+            <button onclick="go()" style="background:var(--aether-teal); color:white; border:none; padding: 7px 15px; border-radius:20px; cursor:pointer;">Go</button>
+        </div>
+        <div class="view-container" id="view-container"></div>
+    </div>
+</div>
+
+<script>
+    const { ipcRenderer } = require('electron');
+    const fs = require('fs');
+    const path = require('path');
+    let tabCount = 0, activeTabId = null;
+    let lastRequestedDomain = ""; // Track the name like roam.com
+
+    function toggleTheme() { document.body.classList.toggle('light-theme'); }
+
+    function createTab(url, title = "New Tab") {
+        tabCount++;
+        const id = `tab-${tabCount}`;
+        const tab = document.createElement('div');
+        tab.className = 'tab'; tab.id = `btn-${id}`;
+        tab.innerHTML = `<span onclick="switchTab('${id}')">${title}</span><span onclick="closeTab('${id}', event)" style="margin-left:10px">✕</span>`;
+        document.getElementById('tabs-container').appendChild(tab);
+        const wv = document.createElement('webview');
+        wv.id = id; wv.setAttribute('src', url); wv.setAttribute('nodeintegration', '');
+        document.getElementById('view-container').appendChild(wv);
+        
+        wv.addEventListener('did-finish-load', () => {
+            if(activeTabId === id) {
+                // If it's a local file, show the domain name instead of file://
+                if (wv.getURL().startsWith('file://')) {
+                    document.getElementById('url-bar').value = lastRequestedDomain || "Local Project";
+                } else {
+                    document.getElementById('url-bar').value = wv.getURL();
+                }
+            }
+            document.querySelector(`#btn-${id} span`).innerText = wv.getTitle().substring(0, 12);
+        });
+        switchTab(id);
+    }
+
+    function switchTab(id) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('webview').forEach(v => v.classList.remove('active'));
+        document.getElementById(`btn-${id}`).classList.add('active');
+        document.getElementById(id).classList.add('active');
+        activeTabId = id;
+        
+        const wv = document.getElementById(id);
+        if (wv.getURL().startsWith('file://')) {
+            document.getElementById('url-bar').value = lastRequestedDomain;
+        } else {
+            document.getElementById('url-bar').value = wv.getURL();
+        }
+    }
+
+    function closeTab(id, e) {
+        e.stopPropagation();
+        document.getElementById(`btn-${id}`).remove();
+        document.getElementById(id).remove();
+        const rem = document.querySelectorAll('.tab');
+        if (rem.length > 0) switchTab(rem[rem.length-1].id.replace('btn-', ''));
+    }
+
+    function getCurrentWebview() { return document.getElementById(activeTabId); }
+
+    const pathInput = document.getElementById('path-input');
+    document.getElementById('drop-zone').ondrop = (e) => { e.preventDefault(); pathInput.value = e.dataTransfer.files[0].path; };
+    document.getElementById('drop-zone').ondragover = (e) => e.preventDefault();
+
+    function register() {
+        const domain = document.getElementById('dom-input').value;
+        let folderPath = pathInput.value;
+        if(!domain || !folderPath) return alert("Missing info!");
+        ipcRenderer.send('register-site', { domain, folderPath });
+        setTimeout(updateList, 150);
+    }
+
+    function updateList() {
+        const regPath = path.join(__dirname, 'registry.json');
+        if (!fs.existsSync(regPath)) return;
+        const data = JSON.parse(fs.readFileSync(regPath, 'utf8'));
+        const list = document.getElementById('registry-list');
+        list.innerHTML = '';
+        Object.keys(data).forEach(dom => {
+            const item = document.createElement('div');
+            item.style = "padding:10px; background:var(--input-bg); border-radius:5px; margin-bottom:5px; cursor:pointer; display:flex; justify-content:space-between; font-size: 0.85rem;";
+            item.innerHTML = `<span>🌐 ${dom}</span><span onclick="deleteSite('${dom}', event)">✕</span>`;
+            item.onclick = () => { document.getElementById('url-bar').value = dom; };
+            item.ondblclick = () => { go(); };
+            list.appendChild(item);
+        });
+    }
+
+    function deleteSite(dom, e) {
+        e.stopPropagation();
+        const data = JSON.parse(fs.readFileSync(path.join(__dirname, 'registry.json'), 'utf8'));
+        delete data[dom];
+        fs.writeFileSync(path.join(__dirname, 'registry.json'), JSON.stringify(data, null, 2));
+        updateList();
+    }
+
+    function go() { 
+        const input = document.getElementById('url-bar').value;
+        lastRequestedDomain = input; // Save the "roam.com" name
+        ipcRenderer.send('lookup-domain', input); 
+    }
+
+    ipcRenderer.on('navigate', (e, url) => {
+        if (!activeTabId) createTab(url);
+        else getCurrentWebview().loadURL(url);
+    });
+
+    updateList();
+    createTab('https://www.google.com', 'Google');
+</script>
+</body>
+</html>
